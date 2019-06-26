@@ -21,17 +21,17 @@ test <- read_csv("test.csv", col_names = TRUE)
 glimpse(train)
 
 #  Storing character columns as factors
-train_fac <- train[, which(summarise_all(train, is.character) == 1)] %>% 
+train_fac <- train[, which(summarise_all(train, is.character) == 1)] %>%
   mutate_all(as.factor) %>%
   mutate_all(addNA) %>%
-  bind_cols(train[, which(summarise_all(train, is.character) == 0)]) 
+  bind_cols(train[, which(summarise_all(train, is.character) == 0)])
 lapply(train_fac, function(x){levels(x)})
 glimpse(train_fac)
 
 #  Data set with only numeric variables (some are still categorical and need to be encoded)
 train_num <- train_fac[, which(summarise_all(train_fac, is.numeric) == 1)]
 train_num <- train_num[, -1]
-train_num2 <- 
+train_num2 <-
 
 #  Correlation table between numeric variables
 train_cor <- cor(train_num) %>%
@@ -39,13 +39,13 @@ train_cor <- cor(train_num) %>%
 train_cor$value <- round(train_cor$value, 2)
 
 #  Correlation ggplot
-cor_plot <- ggplot(train_cor, aes(Var1, Var2, fill = value)) + 
-  geom_tile() + 
-  theme_minimal() + 
-  scale_fill_gradient(low = "orange", high = "dark blue", 
-                      limit = c(0, 1), space = "Lab", 
+cor_plot <- ggplot(train_cor, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  theme_minimal() +
+  scale_fill_gradient(low = "orange", high = "dark blue",
+                      limit = c(0, 1), space = "Lab",
                       name="Correlation") +
-  coord_fixed() + 
+  coord_fixed() +
   theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1, size = 6),
         axis.text.y = element_text(size = 6),
         axis.title.y = element_blank(),
@@ -53,16 +53,16 @@ cor_plot <- ggplot(train_cor, aes(Var1, Var2, fill = value)) +
 cor_plot
 
 #  Numeric Variables ggplots
-ggplot(train_num, aes(LotArea, log(SalePrice))) + 
+ggplot(train_num, aes(LotArea, log(SalePrice))) +
   geom_point()
 
-ggplot(train_num, aes(OverallCond, log(SalePrice))) + 
+ggplot(train_num, aes(OverallCond, log(SalePrice))) +
   geom_point()
 
-ggplot(train_num, aes(GrLivArea, log(SalePrice))) + 
+ggplot(train_num, aes(GrLivArea, log(SalePrice))) +
   geom_point()
 
-ggplot(train_num, aes(MasVnrArea, log(SalePrice))) + 
+ggplot(train_num, aes(MasVnrArea, log(SalePrice))) +
   geom_point()
 
 #  Correlation ggplot with only sale price
@@ -93,5 +93,3 @@ predict(model_num)
 
 
 ```
-
-

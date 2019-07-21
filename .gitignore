@@ -36,5 +36,6 @@ vignettes/*.pdf
 rsconnect/
 
 submission.csv
+.ipynb_checkpoints
 
 .DS_Store

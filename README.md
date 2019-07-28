@@ -4,11 +4,11 @@
 <a href="https://www.kaggle.com/c/house-prices-advanced-regression-techniques">Competition Page</a>
 <div> This repo serves as a way to practice regression and machine learning models.</div>
 
-<h1> To-do: <h1>
+<h1> To-do: </h1>
   <p> Organize r files
   Clean r code
   Format decent html output
-  Organize submissions <p>
+  Organize submissions </p>
 
 <h1> References <h1>
 

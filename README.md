@@ -4,7 +4,7 @@
 <a href="https://www.kaggle.com/c/house-prices-advanced-regression-techniques">Competition Page</a>
 <div> This repo serves as a way to practice regression and machine learning models.</div>
 
-<div> References <div>
+<div> References </div>
 
 1.<https://www.kaggle.com/couyang/hybrid-svm-benchmark-approach-0-11180-lb-top-2>
 

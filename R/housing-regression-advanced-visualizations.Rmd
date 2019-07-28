@@ -1,0 +1,172 @@
+---
+title: "advanced-housing-regression-preprocessing"
+author: "Andrew Shao"
+date: "July 20, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(080599)
+library(tidyverse)
+library(reshape2)
+library(glmnet)
+library(DAAG)
+library(MASS)
+library(GGally)
+library(mice)
+library(VIM)
+```
+
+Data Cleaning
+```{r}
+train <- read_csv("train.csv", col_names = TRUE)
+test <- read_csv("test.csv", col_names = TRUE)
+
+# Formatting for SVM
+## Reference1
+full <- bind_rows(train, test)
+SalePrice <- train$SalePrice
+Id <- test$Id
+full[, c('Id', 'SalePrice')] <- NULL
+full_chr <- full[, sapply(full, is.character)]
+full_int <- full[, sapply(full, is.integer)]
+## Manual feature engineering for SVM
+### Lot Frontage (not touching for now, using mice package)
+full_int[which(is.na(full_int$LotFrontage) == 1), ]
+### Alley
+full_chr$Alley[is.na(full_chr$Alley)] <- "None"
+### Basement
+full_chr[is.na(full_chr$BsmtExposure), ]
+full_int$BsmtFinSF1[is.na(full_int$BsmtFinSF1)] <- 0
+full_int$BsmtFinSF2[is.na(full_int$BsmtFinSF2)] <- 0
+full_int$BsmtUnfSF[is.na(full_int$BsmtUnfSF)] <- 0
+full_int$TotalBsmtSF[is.na(full_int$TotalBsmtSF)] <- 0
+full_int$BsmtFullBath[is.na(full_int$BsmtFullBath)] <- 0
+full_int$BsmtHalfBath[is.na(full_int$BsmtHalfBath)] <- 0
+### Masonry Veneer
+full_chr$MasVnrType[which(is.na(full_int$MasVnrArea) == 1)] <- "None"
+full_chr$MasVnrType[is.na(full_chr$MasVnrType)] <- "Stone"
+full_int$MasVnrArea[is.na(full_int$MasVnrArea)] <- 0
+### Garage
+full_int$GarageYrBlt[is.na(full_int$GarageYrBlt)] <- 0
+full_int$GarageCars[is.na(full_int$GarageCars)] <- 0
+full_int$GarageArea[is.na(full_int$GarageArea)] <- 0
+full_chr[is.na(full_chr)] <- "Not Available"
+full_fac <- mutate_all(full_chr, as.factor) %>% as.data.frame()
+full_combined <- bind_cols(full_fac, full_int)
+
+# Formatting train set
+train_format <- train[, which(summarise_all(train, is.character) == 1)] %>% 
+  mutate_all(as.factor) %>%
+  mutate_all(addNA) %>%
+  bind_cols(train[, which(summarise_all(train, is.character) == 0)]) %>%
+  mutate(MSSubClass = factor(MSSubClass)) %>%
+  mutate(OverallQual = factor(OverallQual)) %>%
+  mutate(OverallCond = factor(OverallCond))
+
+# Formatting test set
+test_format <- test[, which(summarise_all(test, is.character) == 1)] %>% 
+  mutate_all(as.factor) %>%
+  mutate_all(addNA) %>%
+  bind_cols(test[, which(summarise_all(test, is.character) == 0)]) %>%
+  mutate(MSSubClass = factor(MSSubClass)) %>%
+  mutate(OverallQual = factor(OverallQual)) %>%
+  mutate(OverallCond = factor(OverallCond))
+
+# Imputing train set 
+## Plots of missing values
+aggr_train <- aggr(train_format, numbers = TRUE, sortVars = TRUE, labels = names(train), cex.axis = 0.7, gap = 0.3, ylab = c("Histogram of missing data", "Pattern"))
+## Imputation
+apply(train_format, 2, is.na) %>%
+  apply(2, sum)
+temp_train <- mice(train_format[, 1:81], meth = "pmm")
+
+# Imputing test set
+## Plots of missing values
+aggr_test <- aggr(test_format, numbers = TRUE, sortVars = TRUE, labels = names(train), cex.axis = 0.7, gap = 0.3, ylab = c("Histogram of missing data", "Pattern"))
+```
+
+Exploratory Data Analysis
+```{r}
+ggplot(train_format, aes(Neighborhood, SalePrice, col = Neighborhood)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 90))
+
+ggplot(train_format, aes(fct_reorder(Foundation, log(SalePrice)), log(SalePrice), col = Foundation)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 90))
+
+plot(density(log(train$X1stFlrSF)))
+plot(density(log(train$X2ndFlrSF)))
+plot(density((train$OverallQual)))
+```
+
+
+Exploratory Data Analysis (Need to clean!!!)
+```{r}
+train_index <- sample(1:nrow(train), nrow(train)/2)
+train_test <- (-train_index)
+ytest <- y[train_test]
+glimpse(train)
+glimpse(test)
+
+#  Storing character columns as factors
+train_fac <- train[, which(summarise_all(train, is.character) == 1)] %>% 
+  mutate_all(as.factor) %>%
+  mutate_all(addNA) %>%
+  bind_cols(train[, which(summarise_all(train, is.character) == 0)]) %>%
+  mutate(MSSubClass = factor(MSSubClass))
+lapply(train_fac, function(x){levels(x)})
+glimpse(train_fac)
+
+#  Data set with only numeric variables (some are still categorical and need to be encoded)
+train_num <- train[, which(summarise_all(train, is.double) == 1)]
+glimpse(train_num)
+
+test_num <- test[, which(summarise_all(test, is.double) == 1)]
+glimpse(test_num)
+
+#  Correlation table between numeric variables
+train_cor <- cor(train_num) %>%
+  melt()
+train_cor$value <- round(train_cor$value, 2)
+
+#  Correlation ggplot
+cor_plot <- ggplot(train_cor, aes(Var1, Var2, fill = value)) + 
+  geom_tile() + 
+  theme_minimal() + 
+  scale_fill_gradient(low = "orange", high = "dark blue", 
+                      limit = c(0, 1), space = "Lab", 
+                      name="Correlation") +
+  coord_fixed() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1, size = 6),
+        axis.text.y = element_text(size = 6),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank())
+cor_plot
+
+train_complete <- train_num[complete.cases(train_num),]
+
+apply(test_mean, 2, summary)
+
+ggplot(train_fac, aes(GrLivArea, log(SalePrice), col = Neighborhood)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(OverallQual, log(SalePrice), col = MSZoning)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(OverallQual, log(SalePrice), col = factor(OverallCond))) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(OverallQual, log(SalePrice), col = BsmtQual)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(log(GrLivArea), log(SalePrice), col = RoofMatl)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+```

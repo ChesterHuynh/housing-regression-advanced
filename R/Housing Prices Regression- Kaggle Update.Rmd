@@ -1,0 +1,309 @@
+---
+title: "Housing Price Regression"
+author: "Andrew Shao"
+date: "May 31, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(reshape2)
+library(glmnet)
+library(DAAG)
+library(MASS)
+library(GGally)
+library(mice)
+```
+
+Exploratory Data Analysis and First Regressions
+```{r}
+train <- read_csv("train.csv", col_names = TRUE)
+test <- read_csv("test.csv", col_names = TRUE)
+glimpse(train)
+glimpse(test)
+
+#  Storing character columns as factors
+train_fac <- train[, which(summarise_all(train, is.character) == 1)] %>% 
+  mutate_all(as.factor) %>%
+  mutate_all(addNA) %>%
+  bind_cols(train[, which(summarise_all(train, is.character) == 0)]) %>%
+  mutate(MSSubClass = factor(MSSubClass))
+lapply(train_fac, function(x){levels(x)})
+glimpse(train_fac)
+
+#  Data set with only numeric variables (some are still categorical and need to be encoded)
+train_num <- train[, which(summarise_all(train, is.double) == 1)]
+glimpse(train_num)
+
+test_num <- test[, which(summarise_all(test, is.double) == 1)]
+glimpse(test_num)
+
+#  Correlation table between numeric variables
+train_cor <- cor(train_num) %>%
+  melt()
+train_cor$value <- round(train_cor$value, 2)
+
+#  Correlation ggplot
+cor_plot <- ggplot(train_cor, aes(Var1, Var2, fill = value)) + 
+  geom_tile() + 
+  theme_minimal() + 
+  scale_fill_gradient(low = "orange", high = "dark blue", 
+                      limit = c(0, 1), space = "Lab", 
+                      name="Correlation") +
+  coord_fixed() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1, size = 6),
+        axis.text.y = element_text(size = 6),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank())
+cor_plot
+
+train_complete <- train_num[complete.cases(train_num),]
+
+#  Removing outliers(lowered score)
+train_complete2 <- train_complete[-c(492, 409, 998),]
+
+#  Mean imputation for test set
+
+test_mean <- test_num
+test_mean$LotFrontage[is.na(test_mean$LotFrontage)] <- 67
+test_mean$MasVnrArea[is.na(test_mean$MasVnrArea)] <- 0
+test_mean$BsmtFinSF1[is.na(test_mean$BsmtFinSF1)] <- 350.5
+test_mean$BsmtFinSF2[is.na(test_mean$BsmtFinSF2)] <- 0
+test_mean$BsmtUnfSF[is.na(test_mean$BsmtUnfSF)] <- 460
+test_mean$TotalBsmtSF[is.na(test_mean$TotalBsmtSF)] <- 988
+test_mean$BsmtFullBath[is.na(test_mean$BsmtFullBath)] <- 0
+test_mean$BsmtHalfBath[is.na(test_mean$BsmtHalfBath)] <- 0
+test_mean$GarageYrBlt[is.na(test_mean$GarageYrBlt)] <- 1979
+test_mean$GarageCars[is.na(test_mean$GarageCars)] <- 2
+test_mean$GarageArea[is.na(test_mean$GarageArea)] <- 480
+
+apply(test_mean, 2, summary)
+
+#  Playground
+#  Initial regressions
+#  **Still figuring out what is going on with factors
+# glm(train_fac$SalePrice ~ ., data = train_fac)
+
+#  Regression with only numeric factors
+model_num <- glm(log(SalePrice) ~ ., data = train_num)
+summary(model_num)
+plot(model_num)
+dirty_pred <- predict(model_num, test) %>%
+  exp()
+dirty_reg <- data.frame("Id" = test$Id, "SalePrice" = dirty_pred)
+dirty_reg$SalePrice[is.na(dirty_reg$SalePrice)] <- 179110
+glimpse(dirty_reg)
+write_csv(dirty_reg, "dirty_reg.csv")
+
+#  Lasso Regression
+#  Predictor model matrix
+x <- model.matrix(SalePrice ~ ., train_complete)
+# x <- as.matrix(train_num[1:37])
+#  Target model matrix
+# y <- model.matrix(SalePrice ~ ., train_num)[, 38]
+y <- train_complete$SalePrice
+y <- log(y)
+#  Test model matrix (might want to combine )
+test2 <- model.matrix(~., data = test_mean, na.action = NULL)
+#  Stepwise regression
+train_lm <- lm(log(SalePrice)~., data = train_complete)
+step1 <- stepAIC(train_lm, direction = "both")
+step_predict1 <- predict(step1, test_num) %>%
+  exp()
+step_reg1 <- data.frame("Id" = test$Id, "SalePrice" = step_predict1) 
+step_reg1$SalePrice[is.na(step_reg1$SalePrice)] <- 177354
+write_csv(step_reg1, "step_reg1.csv")
+#  Ridge regression
+lambda <- 10^seq(10, -2, length = 100)
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = lambda)
+#***CHANGE WORDINGfind the best lambda from our list via cross-validation
+cv.out <- cv.glmnet(x, y, alpha = 0)
+bestlam <- cv.out$lambda.min
+lasso_mod1 <- glmnet(x, y, alpha = 1, lambda = lambda)
+lasso_coef1 <- predict(lasso_mod1, type = "coefficient", s = bestlam)
+lasso_pred1 <- predict(lasso_mod1, s = bestlam, newx = test2) %>%
+  exp()
+lasso_reg1 <- data.frame("Id" = test$Id, "SalePrice" = lasso_pred1)
+glimpse(lasso_reg1)
+colnames(lasso_reg1) <- c("Id", "SalePrice")
+glimpse(lasso_reg1)
+write_csv(lasso_reg1, "lasso_reg1.csv")
+```
+
+Second Iteration of Lasso
+```{r}
+#  Lasso Regression
+#  Predictor model matrix
+train_complete3 <- train_complete %>%
+    mutate(OverallQual2 = OverallQual^2)
+x <- model.matrix(SalePrice ~ ., train_complete3)
+# x <- as.matrix(train_num[1:37])
+#  Target model matrix
+# y <- model.matrix(SalePrice ~ ., train_num)[, 38]
+y <- train_complete$SalePrice
+y <- log(y)
+#  Test model matrix (might want to combine )
+test_mean2 <- test_mean %>% 
+    mutate(OverallQual2 = OverallQual^2)
+test2 <- model.matrix(~., data = test_mean2, na.action = NULL)
+#  Ridge regression
+lambda <- 10^seq(10, -2, length = 100)
+ridge_mod <- glmnet(x, y, alpha = 0, lambda = lambda)
+ridge_pred <- predict(ridge_mod, s = bestlam, newx = test2)
+ridge_coef <- predict(ridge_mod, type = "coefficient", s = bestlam) %>%
+    exp()
+ridge_reg <- data.frame(test$Id, ridge_pred)
+colnames(ridge_reg) <- c("Id", "SalePrice")  
+write_csv(ridge_reg, "ridge_reg2.csv")
+#***CHANGE WORDINGfind the best lambda from our list via cross-validation
+cv.out <- cv.glmnet(x, y, alpha = 0)
+bestlam <- cv.out$lambda.min
+lasso_mod1 <- glmnet(x, y, alpha = 1, lambda = lambda)
+lasso_coef1 <- predict(lasso_mod1, type = "coefficient", s = bestlam)
+lasso_pred1 <- predict(lasso_mod1, s = bestlam, newx = test2)
+lasso_reg1 <- data.frame("Id" = test$Id, "SalePrice" = lasso_pred1)
+colnames(lasso_reg1) <- c("Id", "SalePrice")
+write_csv(lasso_reg1, "lasso_reg2.csv")
+```
+
+More EDA
+```{r}
+ggplot(train_fac, aes(GrLivArea, log(SalePrice), col = Neighborhood)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(OverallQual, log(SalePrice), col = MSZoning)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(OverallQual, log(SalePrice), col = factor(OverallCond))) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(OverallQual, log(SalePrice), col = BsmtQual)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+
+ggplot(train_fac, aes(log(GrLivArea), log(SalePrice), col = RoofMatl)) + 
+    geom_point(alpha = 0.1) + 
+    stat_smooth(geom = "line", method = "lm", se = F, alpha = 0.5)
+```
+
+Second Iteration of Stepwise
+```{r}
+#  Stepwise regression
+train_complete4 <- train_complete3[-c(998, 409, 492, 242, 26), -1]
+train_fac2 <- train_fac[-c(1299, 524, 314), ]
+test_fac$BsmtQual[which(is.na(tuned_reg$SalePrice) == 1)]
+train_lm <- lm(log(SalePrice)~., data = train_complete4)
+step1 <- stepAIC(train_lm, direction = "both")
+coefficients(step1)
+vif(step1)
+step_predict1 <- predict(step1, test_mean2) %>%
+    exp()
+step_reg1 <- data.frame("Id" = test$Id, "SalePrice" = step_predict1)
+summary(step1)
+summary(step_reg1$SalePrice)
+plot(step1)
+write_csv(step_reg1, "step_reg6.csv")
+
+## Building off of above stepwise
+train_fac3 <- mutate(train_fac2, TotalSF = BsmtFinSF1 + BsmtFinSF2 + `1stFlrSF` + `2ndFlrSF`)
+
+final_lm <- lm(log(SalePrice) ~ LotArea + OverallCond + 
+                    log(GrLivArea) + BsmtFullBath + BsmtFinSF1 + BsmtFinSF2 + 
+                    FullBath + HalfBath + OverallQual + 
+                    BsmtFinType1 + BsmtFinType2 + 
+                    KitchenAbvGr + Fireplaces + Neighborhood + 
+                    GarageCars + OpenPorchSF + MSZoning + 
+                    MSSubClass + BsmtQual + (BsmtFinSF1 * BsmtFinType1) + 
+                    (BsmtFinSF2 * BsmtFinType2) + 
+                    Exterior1st + RoofStyle + RoofMatl + YearBuilt + 
+                    YrSold + YearRemodAdd + GarageYrBlt, 
+         data = train_fac3)
+plot(final_lm)
+vif(final_lm)
+summary(final_lm)
+dfinal_predict <- predict(final_lm, test_fac) %>%
+  exp()
+tuned_reg <- data.frame("Id" = test$Id, "SalePrice" = final_predict)
+summary(tuned_reg$SalePrice)
+tuned_reg$SalePrice[which(is.na(tuned_reg$SalePrice))] <- c(179438, 178438, 185000)
+write_csv(tuned_reg, "tuned_reg6.csv")
+```
+
+Preparing test set with all variables (-utilities)
+```{r}
+test_fac <- test[, which(summarise_all(test, is.character) == 1)] %>%
+    mutate_all(as.factor) %>%
+#    mutate_all(addNA) %>%
+    bind_cols(test[, which(summarise_all(test, is.character) == 0)]) %>%
+    mutate(MSSubClass = factor(MSSubClass))
+#lapply(test_fac, function(x){summary(x)})
+test_fac <- test_fac[, -6]
+apply(test_fac, 2, is.na) %>%
+    apply(2, sum)
+summary(test_fac$MSZoning)
+test_fac$MSZoning[which(is.na(test_fac$MSZoning) == 1)] <- "RL"
+test_fac$Exterior1st[which(test_fac$Exterior1st == "AsphShn")] <- "AsbShng"
+test_fac$ExterCond[which(test_fac$ExterCond == "Po")] <- "TA"
+test_fac$Functional[which(test_fac$Functional == "Sev")] <- "Typ"
+test_fac$MiscFeature[which(test_fac$MiscFeature == "Gar2")] <- "Othr"
+test_fac$MSSubClass[which(test_fac$MSSubClass == "150")] <- "120"
+summary(test_fac$Exterior1st)
+```
+
+Third Iteration of Stepwise
+```{r}
+lapply(train_fac, function(x){summary(x)})
+train_fac <- train_fac[, -6]
+train_complete4 <- train_fac[complete.cases(train_fac),]
+train_complete4 <- train_complete4[-c(643, 397, 409), ]
+train_lm <- lm(log(SalePrice)~., data = train_complete4)
+step1 <- stepAIC(train_lm, direction = "both")
+plot(step1)
+coefficients(step1)
+step_predict1 <- predict(step1, test_fac) %>%
+    exp()
+step_reg1 <- data.frame("Id" = test$Id, "SalePrice" = step_predict1)
+summary(step1)
+summary(step_reg1$SalePrice)
+plot(step1)
+step_reg1$SalePrice[is.na(step_reg1$SalePrice)] <- 183444
+write_csv(step_reg1, "step_reg5.csv")
+glimpse(step_reg1)
+sum(is.na(step_reg1$SalePrice))
+```
+
+Third Iteration of Lasso
+```{r}
+x <- model.matrix(SalePrice ~ ., train_complete4)
+# x <- as.matrix(train_num[1:37])
+#  Target model matrix
+# y <- model.matrix(SalePrice ~ ., train_num)[, 38]
+y <- train_complete$SalePrice
+y <- log(y)
+#  Test model matrix (might want to combine )
+test_mean2 <- test_mean %>% 
+    mutate(OverallQual2 = OverallQual^2)
+test2 <- model.matrix(~., data = test_mean2, na.action = NULL)
+#  Ridge regression
+lambda <- 10^seq(10, -2, length = 100)
+ridge_mod <- glmnet(x, y, alpha = 0, lambda = lambda)
+ridge_pred <- predict(ridge_mod, s = bestlam, newx = test2) %>%
+    exp()
+ridge_coef <- predict(ridge_mod, type = "coefficient", s = bestlam)
+ridge_reg <- data.frame(test$Id, ridge_pred)
+colnames(ridge_reg) <- c("Id", "SalePrice")  
+write_csv(ridge_reg, "ridge_reg2.csv")
+#***CHANGE WORDINGfind the best lambda from our list via cross-validation
+cv.out <- cv.glmnet(x, y, alpha = 0)
+bestlam <- cv.out$lambda.min
+lasso_mod1 <- glmnet(x, y, alpha = 1, lambda = lambda)
+lasso_coef1 <- predict(lasso_mod1, type = "coefficient", s = bestlam)
+lasso_pred1 <- predict(lasso_mod1, s = bestlam, newx = test2)
+lasso_reg1 <- data.frame("Id" = test$Id, "SalePrice" = lasso_pred1)
+colnames(lasso_reg1) <- c("Id", "SalePrice")
+write_csv(lasso_reg1, "lasso_reg2.csv")
+```

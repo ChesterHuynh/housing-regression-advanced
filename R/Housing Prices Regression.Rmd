@@ -1,0 +1,168 @@
+---
+title: "Housing Price Regression"
+author: "Andrew Shao"
+date: "May 31, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(reshape2)
+library(glmnet)
+library(DAAG)
+library(MASS)
+```
+
+Exploratory Data Analysis
+```{r}
+train <- read_csv("train.csv", col_names = TRUE)
+test <- read_csv("test.csv", col_names = TRUE)
+glimpse(train)
+glimpse(test)
+
+#  Storing character columns as factors
+train_fac <- train[, which(summarise_all(train, is.character) == 1)] %>% 
+  mutate_all(as.factor) %>%
+  mutate_all(addNA) %>%
+  bind_cols(train[, which(summarise_all(train, is.character) == 0)]) 
+lapply(train_fac, function(x){levels(x)})
+glimpse(train_fac)
+
+#  Data set with only numeric variables (some are still categorical and need to be encoded)
+train_num <- train[, which(summarise_all(train, is.double) == 1)]
+glimpse(train_num)
+
+test_num <- test[, which(summarise_all(test, is.double) == 1)]
+
+#  Correlation table between numeric variables
+train_cor <- cor(train_num) %>%
+  melt()
+train_cor$value <- round(train_cor$value, 2)
+
+#  Correlation ggplot
+cor_plot <- ggplot(train_cor, aes(Var1, Var2, fill = value)) + 
+  geom_tile() + 
+  theme_minimal() + 
+  scale_fill_gradient(low = "orange", high = "dark blue", 
+                      limit = c(0, 1), space = "Lab", 
+                      name="Correlation") +
+  coord_fixed() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1, size = 6),
+        axis.text.y = element_text(size = 6),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank())
+cor_plot
+
+#  Numeric Variables ggplots
+ggplot(train_num, aes(LotArea, log(SalePrice))) + 
+  geom_point()
+
+ggplot(train_num, aes(OverallCond, log(SalePrice))) + 
+  geom_point()
+
+ggplot(train_num, aes(GrLivArea, log(SalePrice))) + 
+  geom_point()
+
+ggplot(train_num, aes(MasVnrArea, log(SalePrice))) + 
+  geom_point()
+
+#  Correlation ggplot with only sale price
+train_cor2 <- train_cor[]
+
+#  Looking at NA values
+apply(train_fac, 2, is.na) %>%
+  apply(2, sum)
+
+apply(train_num, 2, is.na) %>%
+  apply(2, sum)
+
+apply(test, 2, is.na) %>%
+  apply(2, sum)
+
+apply(test_num, 2, is.na) %>%
+  apply(2, sum)
+
+apply(train_fac, 1, is.na)
+
+train_fac[which(is.na(train_fac) == 1), ]
+
+train_complete <- train_num[complete.cases(train_num),]
+
+#  Removing outliers
+train_complete2 <- train_complete[-c(492, 409, 998),]
+
+apply(test_num, 2, summary)
+
+#  Mean imputation for test set
+
+test_mean <- test_num
+test_mean$LotFrontage[is.na(test_mean$LotFrontage)] <- 67
+test_mean$MasVnrArea[is.na(test_mean$MasVnrArea)] <- 0
+test_mean$BsmtFinSF1[is.na(test_mean$BsmtFinSF1)] <- 350.5
+test_mean$BsmtFinSF2[is.na(test_mean$BsmtFinSF2)] <- 0
+test_mean$BsmtUnfSF[is.na(test_mean$BsmtUnfSF)] <- 460
+test_mean$TotalBsmtSF[is.na(test_mean$TotalBsmtSF)] <- 988
+test_mean$BsmtFullBath[is.na(test_mean$BsmtFullBath)] <- 0
+test_mean$BsmtHalfBath[is.na(test_mean$BsmtHalfBath)] <- 0
+test_mean$GarageYrBlt[is.na(test_mean$GarageYrBlt)] <- 1979
+test_mean$GarageCars[is.na(test_mean$GarageCars)] <- 2
+test_mean$GarageArea[is.na(test_mean$GarageArea)] <- 480
+
+apply(test_mean, 2, summary)
+```
+
+```{r}
+#  Playground
+#  Initial regressions
+#  **Still figuring out what is going on with factors
+glm(SalePrice ~ ., data = train_fac)
+
+#  Regression with only numeric factors
+model_num <- glm(log(SalePrice) ~ ., data = train_num)
+summary(model_num)
+plot(model_num)
+dirty_pred <- predict(model_num, test) %>%
+  exp()
+dirty_reg <- data.frame("Id" = test$Id, "SalePrice" = dirty_pred)
+dirty_reg$SalePrice[is.na(dirty_reg$SalePrice)] <- 179110
+glimpse(dirty_reg)
+write_csv(dirty_reg, path = "~/GitHub/housing-regression-advanced/Submissions/dirty_reg.csv")
+
+#  Lasso Regression
+#  Predictor model matrix
+x <- model.matrix(SalePrice ~ ., train_complete)
+# x <- as.matrix(train_num[1:37])
+#  Target model matrix
+# y <- model.matrix(SalePrice ~ ., train_num)[, 38]
+y <- train_complete$SalePrice
+y <- log(y)
+#  Test model matrix (might want to combine )
+test2 <- model.matrix(~., data = test_mean, na.action = NULL)
+#  Stepwise regression
+train_lm <- lm(log(SalePrice)~., data = train_complete2)
+step1 <- stepAIC(train_lm, direction = "both")
+step_predict1 <- predict(step1, test_num) %>%
+  exp()
+step_reg1 <- data.frame("Id" = test$Id, "SalePrice" = step_predict1) 
+step_reg1$SalePrice[is.na(step_reg1$SalePrice)] <- 177354
+glimpse(step_reg1)
+write_csv(step_reg1, path = "~/GitHub/housing-regression-advanced/Submissions/step_reg1.csv")
+#  Ridge regression
+lambda <- 10^seq(10, -2, length = 100)
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = lambda)
+#***CHANGE WORDINGfind the best lambda from our list via cross-validation
+cv.out <- cv.glmnet(x, y, alpha = 0)
+bestlam <- cv.out$lambda.min
+lasso_mod1 <- glmnet(x, y, alpha = 1, lambda = lambda)
+lasso_coef1 <- predict(lasso_mod1, type = "coefficient", s = bestlam)
+lasso_pred1 <- predict(lasso_mod1, s = bestlam, newx = test2) %>%
+  exp()
+lasso_reg1 <- data.frame("Id" = test$Id, "SalePrice" = lasso_pred1)
+glimpse(lasso_reg1)
+colnames(lasso_reg1) <- c("Id", "SalePrice")
+glimpse(lasso_reg1)
+write_csv(lasso_reg1, path = "~/GitHub/housing-regression-advanced/Submissions/lasso_reg1.csv")
+```
+
+

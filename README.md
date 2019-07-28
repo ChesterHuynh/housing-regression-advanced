@@ -5,10 +5,10 @@
 <div> This repo serves as a way to practice regression and machine learning models.</div>
 
 <h1> To-do: <h1>
-  Organize r files
+  <p> Organize r files
   Clean r code
   Format decent html output
-  Organize submissions
+  Organize submissions <p>
 
 <h1> References <h1>
 

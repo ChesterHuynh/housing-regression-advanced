@@ -6,8 +6,11 @@
 
 <h1> To-do: </h1>
   <p> Organize r files
+  
   Clean r code
+  
   Format decent html output
+  
   Organize submissions </p>
 
 <h1> References <h1>

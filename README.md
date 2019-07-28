@@ -13,7 +13,7 @@
   
   Organize submissions </p>
 
-<h1> References <h1>
+<h1> References </h1>
 
 1.<https://www.kaggle.com/couyang/hybrid-svm-benchmark-approach-0-11180-lb-top-2>
 
